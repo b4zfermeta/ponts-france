@@ -1,0 +1,140 @@
+name: Ponts France (OpenStreetMap)
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 2 * *'   # le 2 de chaque mois, 3h17 UTC
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - name: Outils
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool
+      - name: Télécharger la France (Geofabrik)
+        run: wget -q -O france.osm.pbf https://download.geofabrik.de/europe/france-latest.osm.pbf && ls -lh france.osm.pbf
+      - name: Garder hauteurs, ponts et routes
+        run: |
+          osmium tags-filter france.osm.pbf \
+            nwr/maxheight nwr/maxheight:physical n/barrier=height_restrictor \
+            w/bridge w/highway=motorway,motorway_link,trunk,trunk_link,primary,primary_link,secondary,secondary_link,tertiary,tertiary_link,unclassified,residential,service,road,living_street \
+            -o filtre.osm.pbf --overwrite
+          rm france.osm.pbf
+          osmium export filtre.osm.pbf -f geojsonseq -a type,id -o filtre.geojsonseq --overwrite -x print_record_separator=false
+          rm filtre.osm.pbf; ls -lh filtre.geojsonseq
+      - name: Calcul des ponts
+        run: |
+          cat > ponts.py <<'PYEOF'
+          import json, sys, re, os, math
+          from collections import defaultdict
+          src, out = sys.argv[1], sys.argv[2]
+          os.makedirs(out + '/t', exist_ok=True)
+
+          def parse_h(v):
+              if not v: return None
+              v = str(v).strip().lower()
+              if re.search(r'default|none|unsigned|below', v): return None
+              m = re.match(r"^(\d+)'\s*(\d+)?", v)
+              if m: return round(int(m.group(1)) * 0.3048 + int(m.group(2) or 0) * 0.0254, 2)
+              m = re.search(r'(\d+(?:[.,]\d+)?)', v)
+              if not m: return None
+              h = float(m.group(1).replace(',', '.'))
+              return h if 1.5 <= h <= 8 else None
+
+          ROADS = set('motorway motorway_link trunk trunk_link primary primary_link secondary secondary_link tertiary tertiary_link unclassified residential service road living_street'.split())
+          G = 0.01
+          heights, bridges, grid = [], [], defaultdict(list)
+
+          def center(geom):
+              t, c = geom['type'], geom['coordinates']
+              if t == 'Point': return c
+              if t == 'LineString': return c[len(c) // 2]
+              if t in ('Polygon', 'MultiLineString'): return c[0][len(c[0]) // 2]
+              if t == 'MultiPolygon': return c[0][0][len(c[0][0]) // 2]
+              return None
+
+          def layer(p):
+              try: return int(float(p.get('layer', 0)))
+              except: return 0
+
+          roads_file = src + '.roads'
+          nb = 0
+          with open(src) as f, open(roads_file, 'w') as rf:
+              for line in f:
+                  line = line.strip().lstrip('\x1e')
+                  if not line: continue
+                  ft = json.loads(line); p = ft['properties']; g = ft['geometry']
+                  raw = p.get('maxheight') or p.get('maxheight:physical')
+                  h = parse_h(raw)
+                  isroad = p.get('highway') in ROADS and not p.get('bridge') and not p.get('tunnel') and g['type'] == 'LineString'
+                  if (h or p.get('barrier') == 'height_restrictor') and not isroad:
+                      c = center(g)
+                      if c: heights.append([round(c[1], 6), round(c[0], 6), h, (p.get('ref') or p.get('name') or '')[:60], 'h'])
+                  br = p.get('bridge')
+                  if br and br != 'no' and (p.get('highway') or p.get('railway')) and g['type'] == 'LineString':
+                      i = len(bridges); bridges.append((g['coordinates'], layer(p) or 1, 'fer' if p.get('railway') else (p.get('ref') or p.get('name') or 'pont')[:50]))
+                      for (x, y) in g['coordinates']: grid[(int(x / G), int(y / G))].append(i)
+                  elif p.get('highway') in ROADS and not br and not p.get('tunnel') and g['type'] == 'LineString':
+                      rf.write(json.dumps([g['coordinates'], layer(p), raw or '', (p.get('ref') or p.get('name') or '')[:50]]) + '\n')
+                  nb += 1
+          print('objets', nb, 'hauteurs', len(heights), 'ponts', len(bridges))
+
+          def segx(a, b, c, d):
+              r = (b[0] - a[0], b[1] - a[1]); q = (d[0] - c[0], d[1] - c[1]); den = r[0] * q[1] - r[1] * q[0]
+              if abs(den) < 1e-14: return None
+              t = ((c[0] - a[0]) * q[1] - (c[1] - a[1]) * q[0]) / den; u = ((c[0] - a[0]) * r[1] - (c[1] - a[1]) * r[0]) / den
+              return (a[0] + t * r[0], a[1] + t * r[1]) if 0 < t < 1 and 0 < u < 1 else None
+
+          under = []
+          with open(roads_file) as rf:
+              for line in rf:
+                  coords, lay, raw, name = json.loads(line)
+                  found = 0
+                  cand = set()
+                  for (x, y) in coords:
+                      gx, gy = int(x / G), int(y / G)
+                      for dx in (-1, 0, 1):
+                          for dy in (-1, 0, 1): cand.update(grid.get((gx + dx, gy + dy), ()))
+                  for bi in cand:
+                      bc, bl, bname = bridges[bi]
+                      if bl <= lay: continue
+                      for k in range(1, len(coords)):
+                          for j in range(1, len(bc)):
+                              x = segx(coords[k - 1], coords[k], bc[j - 1], bc[j])
+                              if x: under.append([round(x[1], 6), round(x[0], 6), parse_h(raw), name, 'u', bname]); found += 1
+                  if not found and parse_h(raw):
+                      c = coords[len(coords) // 2]; heights.append([round(c[1], 6), round(c[0], 6), parse_h(raw), name, 'h'])
+          os.remove(roads_file)
+          print('passages sous pont', len(under))
+
+          allp = sorted(heights + under, key=lambda r: (r[2] is None, r[4] != 'h'))
+          seen, final = defaultdict(list), []
+          for r in allp:
+              k = (round(r[0] / 0.0003), round(r[1] / 0.0003))
+              if any(abs(a - r[0]) < 0.0003 and abs(b - r[1]) < 0.0004 for i in (-1, 0, 1) for j in (-1, 0, 1) for (a, b) in seen[(k[0] + i, k[1] + j)]): continue
+              seen[k].append((r[0], r[1])); final.append(r)
+          tiles = defaultdict(list)
+          for r in final: tiles[(math.floor(r[0] * 2) / 2, math.floor(r[1] * 2) / 2)].append(r)
+          idx = {}
+          for (a, b), rows in tiles.items():
+              name = f'{a:.1f}_{b:.1f}'
+              with open(f'{out}/t/{name}.json', 'w') as f: json.dump(rows, f, separators=(',', ':'), ensure_ascii=False)
+              idx[name] = [len(rows), sum(1 for r in rows if r[2])]
+          from datetime import date
+          json.dump({'date': date.today().isoformat(), 'total': len(final), 'avecHauteur': sum(1 for r in final if r[2]), 'format': '[lat,lon,hauteur|null,nom,h=panneau/u=sous pont,pont]', 'tiles': idx},
+                    open(out + '/index.json', 'w'), ensure_ascii=False)
+          open(out + '/README.md', 'w').write(f"Ponts France (OpenStreetMap, ODbL) - {len(final)} points, mis a jour le {date.today()}\n")
+          print('final', len(final), 'carreaux', len(idx))
+          PYEOF
+          python3 ponts.py filtre.geojsonseq out
+      - name: Publier (branche data)
+        run: |
+          cd out
+          git init -q -b data
+          git config user.name "robot-ponts"; git config user.email "robot@users.noreply.github.com"
+          git add -A && git commit -q -m "Ponts France $(date +%F)"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" data
