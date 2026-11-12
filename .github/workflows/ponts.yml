@@ -1,8 +1,8 @@
-name: Ponts France (OpenStreetMap)
+name: Base routiere PL France (OpenStreetMap)
 on:
   workflow_dispatch:
   schedule:
-    - cron: '17 3 2 * *'   # le 2 de chaque mois, 3h17 UTC
+    - cron: '17 3 2 * *'
   push:
     branches: [main]
 permissions:
@@ -10,29 +10,34 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 340
     steps:
-      - uses: actions/checkout@v4
       - name: Outils
         run: sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool
-      - name: Télécharger la France (Geofabrik)
+      - name: Telecharger la France (Geofabrik)
         run: wget -q -O france.osm.pbf https://download.geofabrik.de/europe/france-latest.osm.pbf && ls -lh france.osm.pbf
-      - name: Garder hauteurs, ponts et routes
+      - name: Filtrer
         run: |
           osmium tags-filter france.osm.pbf \
-            nwr/maxheight nwr/maxheight:physical n/barrier=height_restrictor \
+            nwr/maxheight nwr/maxheight:physical n/barrier=height_restrictor,toll_booth \
+            w/hgv w/maxweight w/maxweightrating:hgv w/maxaxleload w/maxlength w/maxwidth w/width w/incline \
+            w/maxspeed w/maxspeed:hgv w/maxspeed:forward w/maxspeed:backward w/priority_road \
+            n/railway=level_crossing nwr/amenity=parking,fuel,car_wash,vehicle_wash,weighbridge \
+            nwr/highway=rest_area,services,speed_camera r/boundary=low_emission_zone \
             w/bridge w/highway=motorway,motorway_link,trunk,trunk_link,primary,primary_link,secondary,secondary_link,tertiary,tertiary_link,unclassified,residential,service,road,living_street \
             -o filtre.osm.pbf --overwrite
           rm france.osm.pbf
-          osmium export filtre.osm.pbf -f geojsonseq -a type,id -o filtre.geojsonseq --overwrite -x print_record_separator=false
+          osmium export filtre.osm.pbf -f geojsonseq -o filtre.geojsonseq --overwrite -x print_record_separator=false
           rm filtre.osm.pbf; ls -lh filtre.geojsonseq
-      - name: Calcul des ponts
+      - name: Calcul
         run: |
+          mkdir -p out
           cat > ponts.py <<'PYEOF'
           import json, sys, re, os, math
+          sys.setrecursionlimit(100000)
           from collections import defaultdict
           src, out = sys.argv[1], sys.argv[2]
-          os.makedirs(out + '/t', exist_ok=True)
+          for d in ('t', 'r', 'v', 'p'): os.makedirs(out + '/' + d, exist_ok=True)
 
           def parse_h(v):
               if not v: return None
@@ -45,21 +50,102 @@ jobs:
               h = float(m.group(1).replace(',', '.'))
               return h if 1.5 <= h <= 8 else None
 
-          ROADS = set('motorway motorway_link trunk trunk_link primary primary_link secondary secondary_link tertiary tertiary_link unclassified residential service road living_street'.split())
-          G = 0.01
-          heights, bridges, grid = [], [], defaultdict(list)
+          def num(v, lo, hi, kg=False):
+              if not v: return None
+              v = str(v).strip().lower()
+              m = re.search(r'(\d+(?:[.,]\d+)?)', v)
+              if not m: return None
+              x = float(m.group(1).replace(',', '.'))
+              if kg and ('kg' in v or x > 100): x = x / 1000
+              return round(x, 2) if lo <= x <= hi else None
 
-          def center(geom):
-              t, c = geom['type'], geom['coordinates']
+          SPD = {'fr:urban': 50, 'fr:rural': 80, 'fr:motorway': 130, 'fr:zone30': 30, 'fr:zone20': 20, 'fr:walk': 6, 'fr:trunk': 110, 'fr:expressway': 110}
+          def speed(v):
+              if not v: return 0
+              v = str(v).strip().lower()
+              if v in SPD: return SPD[v]
+              m = re.match(r'^(\d{1,3})(\s*mph)?', v)
+              if not m: return 0
+              x = int(m.group(1)); x = round(x * 1.609) if m.group(2) else x
+              return x if 5 <= x <= 130 else 0
+
+          def restrictions(p):
+              out = []
+              hgv = (p.get('hgv') or '').lower()
+              if hgv == 'no': out.append(('no', ''))
+              elif hgv in ('destination', 'delivery', 'private', 'permit'): out.append(('dest', ''))
+              w = num(p.get('maxweight') or p.get('maxweightrating:hgv') or p.get('maxweightrating'), 1, 43, True)
+              if w: out.append(('wt', str(w)))
+              a = num(p.get('maxaxleload'), 1, 12, True)
+              if a: out.append(('ax', str(a)))
+              l = num(p.get('maxlength'), 3, 20)
+              if l: out.append(('l', str(l)))
+              wd = num(p.get('maxwidth'), 1, 3.2)
+              if wd: out.append(('w', str(wd)))
+              if p.get('highway') in MAINISH:
+                  rw = num(p.get('width'), 1.5, 4.5)
+                  if rw and rw < 4.5: out.append(('nw', str(rw)))
+              inc = p.get('incline')
+              if inc:
+                  m = re.match(r'^-?(\d+(?:[.,]\d+)?)\s*%$', str(inc).strip())
+                  if m:
+                      x = float(m.group(1).replace(',', '.'))
+                      if 8 <= x <= 40: out.append(('sl', str(round(x))))
+              return out
+
+          ROADS = set('motorway motorway_link trunk trunk_link primary primary_link secondary secondary_link tertiary tertiary_link unclassified residential service road living_street'.split())
+          MAINISH = set('primary secondary tertiary unclassified residential road'.split())
+          G = 0.01
+          heights, bridges, grid, restr, pois, zfe = [], [], defaultdict(list), [], [], []
+
+          def center(g):
+              t, c = g['type'], g['coordinates']
               if t == 'Point': return c
               if t == 'LineString': return c[len(c) // 2]
-              if t in ('Polygon', 'MultiLineString'): return c[0][len(c[0]) // 2]
-              if t == 'MultiPolygon': return c[0][0][len(c[0][0]) // 2]
+              if t == 'Polygon': return [sum(p[0] for p in c[0]) / len(c[0]), sum(p[1] for p in c[0]) / len(c[0])]
+              if t == 'MultiPolygon': r = c[0][0]; return [sum(p[0] for p in r) / len(r), sum(p[1] for p in r) / len(r)]
+              if t == 'MultiLineString': return c[0][len(c[0]) // 2]
               return None
 
           def layer(p):
               try: return int(float(p.get('layer', 0)))
               except: return 0
+
+          def yes(v): return str(v or '').lower() in ('yes', 'designated', 'only')
+
+          def poi_code(p):
+              am, hw = p.get('amenity'), p.get('highway')
+              if p.get('railway') == 'level_crossing' and not p.get('crossing'): return 'lc'
+              if hw == 'speed_camera': return 'radar'
+              if p.get('barrier') == 'toll_booth': return 'toll'
+              if am == 'weighbridge': return 'wb'
+              if am == 'parking' and (yes(p.get('hgv')) or p.get('parking') == 'hgv' or p.get('access:hgv') == 'yes'): return 'park'
+              if hw in ('rest_area', 'services'): return 'rest'
+              if am == 'fuel' and (yes(p.get('fuel:HGV_diesel')) or yes(p.get('hgv'))): return 'fuel'
+              if am == 'fuel' and yes(p.get('fuel:adblue')): return 'adb'
+              if am in ('car_wash', 'vehicle_wash') and (yes(p.get('hgv')) or am == 'vehicle_wash'): return 'wash'
+              return None
+
+          VF, VC = {}, defaultdict(int)
+          def simplify(pts, tol=0.00008):
+              if len(pts) < 3: return pts
+              a, b = pts[0], pts[-1]; dx, dy = b[0] - a[0], b[1] - a[1]; L = dx * dx + dy * dy
+              best, bi = -1, 0
+              for i in range(1, len(pts) - 1):
+                  px, py = pts[i][0] - a[0], pts[i][1] - a[1]
+                  d = abs(px * dy - py * dx) / math.sqrt(L) if L else math.hypot(px, py)
+                  if d > best: best, bi = d, i
+              if best <= tol: return [a, b]
+              return simplify(pts[:bi + 1], tol)[:-1] + simplify(pts[bi:], tol)
+          def vwrite(rec, c):
+              k = f'{math.floor(c[1] * 4) / 4:.2f}_{math.floor(c[0] * 4) / 4:.2f}'
+              f = VF.get(k)
+              if not f:
+                  if len(VF) > 900:
+                      for x in VF.values(): x.close()
+                      VF.clear()
+                  f = VF[k] = open(f'{out}/v/{k}.jl', 'a')
+              f.write(json.dumps(rec, separators=(',', ':')) + '\n'); VC[k] += 1
 
           roads_file = src + '.roads'
           nb = 0
@@ -68,20 +154,53 @@ jobs:
                   line = line.strip().lstrip('\x1e')
                   if not line: continue
                   ft = json.loads(line); p = ft['properties']; g = ft['geometry']
+                  if not g: continue
+                  nb += 1
+                  if p.get('boundary') == 'low_emission_zone' and g['type'] in ('Polygon', 'MultiPolygon'):
+                      polys = [g['coordinates']] if g['type'] == 'Polygon' else g['coordinates']
+                      zfe.append({'name': p.get('name', ''), 'polys': [[[[round(x, 4), round(y, 4)] for (x, y) in simplify(r, 0.0003)] for r in poly] for poly in polys]})
+                      continue
+                  pc = poi_code(p)
+                  if pc:
+                      c = center(g)
+                      if c:
+                          nm = (p.get('name') or p.get('brand') or p.get('operator') or p.get('ref') or '')[:60]
+                          extra = 'adblue' if pc == 'fuel' and yes(p.get('fuel:adblue')) else (p.get('maxspeed') or '') if pc == 'radar' else ''
+                          pois.append([round(c[1], 6), round(c[0], 6), pc, nm, extra])
+                      if g['type'] == 'Point': continue
                   raw = p.get('maxheight') or p.get('maxheight:physical')
                   h = parse_h(raw)
-                  isroad = p.get('highway') in ROADS and not p.get('bridge') and not p.get('tunnel') and g['type'] == 'LineString'
+                  isline = g['type'] == 'LineString'
+                  isroad = p.get('highway') in ROADS and not p.get('bridge') and not p.get('tunnel') and isline
                   if (h or p.get('barrier') == 'height_restrictor') and not isroad:
                       c = center(g)
                       if c: heights.append([round(c[1], 6), round(c[0], 6), h, (p.get('ref') or p.get('name') or '')[:60], 'h'])
+                  if p.get('highway') and isline:
+                      for code, val in restrictions(p):
+                          restr.append([code, val, (p.get('ref') or p.get('name') or '')[:50], [[round(x, 5), round(y, 5)] for (x, y) in simplify(g['coordinates'])]])
+                      ms = speed(p.get('maxspeed')) or min([x for x in (speed(p.get('maxspeed:forward')), speed(p.get('maxspeed:backward'))) if x] or [0])
+                      mh = speed(p.get('maxspeed:hgv'))
+                      pr = 1 if p.get('priority_road') in ('designated', 'yes_unposted') else 0
+                      if (ms or mh or pr) and p.get('highway') in ROADS:
+                          pts = simplify(g['coordinates']); xs = [round(x * 1e5) for x, y in pts]; ys = [round(y * 1e5) for x, y in pts]
+                          d = [xs[0], ys[0]]
+                          for i in range(1, len(xs)): d += [xs[i] - xs[i - 1], ys[i] - ys[i - 1]]
+                          vwrite([ms, mh, pr, (p.get('ref') or '')[:12], d], pts[len(pts) // 2])
                   br = p.get('bridge')
-                  if br and br != 'no' and (p.get('highway') or p.get('railway')) and g['type'] == 'LineString':
+                  if br and br != 'no' and (p.get('highway') or p.get('railway')) and isline:
                       i = len(bridges); bridges.append((g['coordinates'], layer(p) or 1, 'fer' if p.get('railway') else (p.get('ref') or p.get('name') or 'pont')[:50]))
                       for (x, y) in g['coordinates']: grid[(int(x / G), int(y / G))].append(i)
-                  elif p.get('highway') in ROADS and not br and not p.get('tunnel') and g['type'] == 'LineString':
+                  elif isroad:
                       rf.write(json.dumps([g['coordinates'], layer(p), raw or '', (p.get('ref') or p.get('name') or '')[:50]]) + '\n')
-                  nb += 1
-          print('objets', nb, 'hauteurs', len(heights), 'ponts', len(bridges))
+          for x in VF.values(): x.close()
+          print('objets', nb, 'hauteurs', len(heights), 'ponts', len(bridges), 'interdits', len(restr), 'poi', len(pois), 'zfe', len(zfe), 'troncons vitesse', sum(VC.values()))
+
+          vidx = {}
+          for k, n in VC.items():
+              pth = f'{out}/v/{k}.jl'
+              with open(pth) as f: rows = f.read().strip().split('\n')
+              with open(f'{out}/v/{k}.json', 'w') as f: f.write('[' + ','.join(rows) + ']')
+              os.remove(pth); vidx[k] = n
 
           def segx(a, b, c, d):
               r = (b[0] - a[0], b[1] - a[1]); q = (d[0] - c[0], d[1] - c[1]); den = r[0] * q[1] - r[1] * q[0]
@@ -93,8 +212,7 @@ jobs:
           with open(roads_file) as rf:
               for line in rf:
                   coords, lay, raw, name = json.loads(line)
-                  found = 0
-                  cand = set()
+                  found = 0; cand = set()
                   for (x, y) in coords:
                       gx, gy = int(x / G), int(y / G)
                       for dx in (-1, 0, 1):
@@ -117,24 +235,31 @@ jobs:
               k = (round(r[0] / 0.0003), round(r[1] / 0.0003))
               if any(abs(a - r[0]) < 0.0003 and abs(b - r[1]) < 0.0004 for i in (-1, 0, 1) for j in (-1, 0, 1) for (a, b) in seen[(k[0] + i, k[1] + j)]): continue
               seen[k].append((r[0], r[1])); final.append(r)
-          tiles = defaultdict(list)
-          for r in final: tiles[(math.floor(r[0] * 2) / 2, math.floor(r[1] * 2) / 2)].append(r)
-          idx = {}
-          for (a, b), rows in tiles.items():
-              name = f'{a:.1f}_{b:.1f}'
-              with open(f'{out}/t/{name}.json', 'w') as f: json.dump(rows, f, separators=(',', ':'), ensure_ascii=False)
-              idx[name] = [len(rows), sum(1 for r in rows if r[2])]
+
+          def tiles_out(rows, folder, latf, lonf):
+              tt = defaultdict(list)
+              for r in rows: la, lo = latf(r), lonf(r); tt[f'{math.floor(la * 2) / 2:.1f}_{math.floor(lo * 2) / 2:.1f}'].append(r)
+              for k, rr in tt.items():
+                  with open(f'{out}/{folder}/{k}.json', 'w') as f: json.dump(rr, f, separators=(',', ':'), ensure_ascii=False)
+              return {k: len(v) for k, v in tt.items()}
+
+          idx = tiles_out(final, 't', lambda r: r[0], lambda r: r[1])
+          ridx = tiles_out(restr, 'r', lambda r: r[3][len(r[3]) // 2][1], lambda r: r[3][len(r[3]) // 2][0])
+          pidx = tiles_out(pois, 'p', lambda r: r[0], lambda r: r[1])
+          with open(out + '/zfe.json', 'w') as f: json.dump(zfe, f, separators=(',', ':'), ensure_ascii=False)
+          from collections import Counter
           from datetime import date
-          json.dump({'date': date.today().isoformat(), 'total': len(final), 'avecHauteur': sum(1 for r in final if r[2]), 'format': '[lat,lon,hauteur|null,nom,h=panneau/u=sous pont,pont]', 'tiles': idx},
-                    open(out + '/index.json', 'w'), ensure_ascii=False)
-          open(out + '/README.md', 'w').write(f"Ponts France (OpenStreetMap, ODbL) - {len(final)} points, mis a jour le {date.today()}\n")
-          print('final', len(final), 'carreaux', len(idx))
+          stats = {'ponts': len(final), 'pontsHauteur': sum(1 for r in final if r[2]), 'interdits': dict(Counter(r[0] for r in restr)), 'poi': dict(Counter(r[2] for r in pois)), 'zfe': len(zfe), 'vitesses': sum(VC.values())}
+          json.dump({'date': date.today().isoformat(), 'v': 2, 'stats': stats, 'tiles': idx, 'rtiles': ridx, 'ptiles': pidx, 'vtiles': vidx}, open(out + '/index.json', 'w'), ensure_ascii=False)
+          open(out + '/README.md', 'w').write(f"Base routière poids lourds France (OpenStreetMap, ODbL), {date.today()}\n\n{json.dumps(stats, ensure_ascii=False)}\n")
+          print(json.dumps(stats, ensure_ascii=False))
           PYEOF
           python3 ponts.py filtre.geojsonseq out
+          rm filtre.geojsonseq; du -sh out out/*
       - name: Publier (branche data)
         run: |
           cd out
           git init -q -b data
-          git config user.name "robot-ponts"; git config user.email "robot@users.noreply.github.com"
-          git add -A && git commit -q -m "Ponts France $(date +%F)"
+          git config user.name "robot-base-pl"; git config user.email "robot@users.noreply.github.com"
+          git add -A && git commit -q -m "Base PL $(date +%F)"
           git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" data
