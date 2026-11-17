@@ -10,11 +10,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - name: Telecharger panneaux VMA, voitures radars et DiaLog
+      - name: Telecharger panneaux VMA, voitures radars, DiaLog et restrictions
         run: |
           cat > sources.py <<'PYEOF'
           # Sources officielles de limites de vitesse -> branche "sources"
-          import csv, io, json, os, re, gzip, zipfile, urllib.request
+          import csv, io, json, math, os, re, time, gzip, zipfile, urllib.request
           from collections import Counter, defaultdict
           OUT = 'out'; os.makedirs(OUT, exist_ok=True)
           UA = {'User-Agent': 'tracktour-sources/1.0 (github actions)'}
@@ -29,28 +29,34 @@ jobs:
               except Exception: return None
           report = {}
 
-          # 1) Panneaux VMA de la Sécurité routière (DSR)
+          # 1) Panneaux VMA de la Sécurité routière (DSR) -> tuiles s/ [lat, lon, valeur B14, drapeaux]
+          FL = {'EB10': 1, 'EB20': 2, 'B33': 4, 'C107': 8, 'C108': 16, 'C207': 32, 'C208': 64}
           try:
               res = [r for r in resources('donnees-de-signalisation-routiere-determinant-la-vitesse-maximale-autorisee')
                      if (r.get('format') or '').lower() == 'zip' or r['url'].lower().endswith('.zip')]
               z = zipfile.ZipFile(io.BytesIO(get(res[0]['url']).read()))
-              rows, codes, hdrs = [], Counter(), []
+              rows, codes, files = [], Counter(), []
               for n in z.namelist():
                   if not n.lower().endswith('.csv'): continue
-                  txt = z.read(n).decode('utf-8-sig', errors='replace')
-                  rd = csv.DictReader(io.StringIO(txt), delimiter=';'); hdrs.append([n, rd.fieldnames])
-                  kc = next((k for k in rd.fieldnames or [] if 'code' in k.lower()), 'Code_list')
-                  kx = next((k for k in rd.fieldnames or [] if 'coord' in k.lower()), 'Coords')
-                  for r in rd:
-                      m = re.findall(r'-?\d+\.\d+', r.get(kx) or '')
-                      if len(m) < 2: continue
-                      cl = (r.get(kc) or '').strip()
-                      for x in re.findall(r'([A-Z]{1,2}\d+[A-Za-z0-9]*)\s*=>', cl): codes[x] += 1
-                      rows.append([round(float(m[0]), 6), round(float(m[1]), 6), cl])
-              with gzip.open(OUT + '/dsr_panneaux.json.gz', 'wt', encoding='utf-8') as f:
-                  json.dump(rows, f, ensure_ascii=False, separators=(',', ':'))
-              report['panneaux_DSR'] = {'fichier': res[0].get('title'), 'date': res[0].get('last_modified'), 'csv': hdrs,
-                  'panneaux': len(rows), 'dans_zone_ouest': sum(1 for r in rows if inbb(r[0], r[1])),
+                  lines = z.read(n).decode('utf-8-sig', errors='replace').splitlines(); files.append([n, lines[0][:80] if lines else ''])
+                  for fields in csv.reader(lines[1:]):
+                      line = ','.join(fields)
+                      m = re.findall(r'(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)', line)
+                      if not m: continue
+                      la, lo = float(m[-1][0]), float(m[-1][1]); v, f = 0, 0
+                      for k, val in re.findall(r'"?([A-Za-z]{1,3}\d+[A-Za-z0-9]*)"?\s*=>\s*(?:"([^"]*)"|NULL)', line):
+                          k = k.upper() if k[0] != 'M' else k; codes[k] += 1
+                          if k == 'B14' and val.isdigit(): v = int(val)
+                          if k in FL: f |= FL[k]
+                          if k.upper().startswith('M4'): f |= 128
+                      rows.append([round(la, 5), round(lo, 5), v, f])
+              tiles = defaultdict(list)
+              for r in rows: tiles[f'{math.floor(r[0] * 4) / 4:.2f}_{math.floor(r[1] * 4) / 4:.2f}'].append(r)
+              os.makedirs(OUT + '/s', exist_ok=True)
+              for k, rr in tiles.items():
+                  with open(f'{OUT}/s/{k}.json', 'w') as f: json.dump(rr, f, separators=(',', ':'))
+              report['panneaux_DSR'] = {'fichier': res[0].get('title'), 'date': res[0].get('last_modified'), 'csv': files,
+                  'panneaux': len(rows), 'tuiles': len(tiles), 'dans_zone_ouest': sum(1 for r in rows if inbb(r[0], r[1])),
                   'codes': codes.most_common(40), 'exemples': rows[:8]}
           except Exception as e:
               report['panneaux_DSR'] = {'erreur': repr(e)}
@@ -58,12 +64,24 @@ jobs:
           # 2) Voitures radars (DVVRCE) : on garde la zone ouest, regroupée par point (~10 m)
           try:
               r0 = [r for r in resources('619f8727e07d975a56664c61') if (r.get('format') or '').lower() == 'csv'][0]
-              resp = get(r0['url'])
-              with open('radar.csv', 'wb') as f:
-                  while True:
-                      b = resp.read(1 << 20)
-                      if not b: break
-                      f.write(b)
+              # téléchargement avec reprise : le serveur coupe parfois la connexion
+              if os.path.exists('radar.csv'): os.remove('radar.csv')
+              for essai in range(10):
+                  try:
+                      pos = os.path.getsize('radar.csv') if os.path.exists('radar.csv') else 0
+                      h = dict(UA, Range=f'bytes={pos}-') if pos else UA
+                      resp = urllib.request.urlopen(urllib.request.Request(r0['url'], headers=h), timeout=300)
+                      if pos and resp.status != 206: pos = 0
+                      with open('radar.csv', 'ab' if pos else 'wb') as f:
+                          while True:
+                              b = resp.read(1 << 20)
+                              if not b: break
+                              f.write(b)
+                      break
+                  except Exception as e:
+                      print('radars : coupure', essai + 1, repr(e)); time.sleep(20)
+              else:
+                  raise RuntimeError('téléchargement des radars impossible après 10 essais')
               with open('radar.csv', encoding='utf-8-sig', errors='replace') as f:
                   head = f.readline(); d = ';' if head.count(';') >= head.count(',') else ','
                   cols = [c.strip().strip('"') for c in head.strip().split(d)]; low = [c.lower() for c in cols]
@@ -104,8 +122,28 @@ jobs:
           except Exception as e:
               report['dialog'] = {'erreur': repr(e)}
 
-          json.dump(report, open(OUT + '/rapport.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
-          print(json.dumps(report, ensure_ascii=False, indent=1)[:6000])
+          # 4) Restrictions officielles pour la carte TrackTour (ponts, gabarit, tonnage, passages à niveau)
+          ODS = {
+              'sncf_ponts_rail': 'https://ressources.data.sncf.com/api/explore/v2.1/catalog/datasets/liste-des-ponts-rail/exports/geojson',
+              'sncf_passages_niveau': 'https://ressources.data.sncf.com/api/explore/v2.1/catalog/datasets/liste-des-passages-a-niveau/exports/geojson',
+              'cd49_gabarit': 'https://data.maine-et-loire.fr/api/explore/v2.1/catalog/datasets/224900019_limitation-de-gabarit-en-maine-et-loire/exports/geojson',
+              'cd49_tonnage': 'https://data.maine-et-loire.fr/api/explore/v2.1/catalog/datasets/224900019_limitation-de-tonnage-en-maine-et-loire/exports/geojson',
+          }
+          os.makedirs(OUT + '/restrictions', exist_ok=True); report['restrictions'] = {}
+          for name, url in ODS.items():
+              try:
+                  g = json.load(get(url)); feats = g.get('features', [])
+                  with open(f'{OUT}/restrictions/{name}.geojson', 'w', encoding='utf-8') as f:
+                      json.dump(g, f, ensure_ascii=False, separators=(',', ':'))
+                  champs = Counter()
+                  for ft in feats[:1000]: champs.update((ft.get('properties') or {}).keys())
+                  report['restrictions'][name] = {'objets': len(feats), 'champs': list(champs),
+                      'exemples': [ft.get('properties') for ft in feats[:3]]}
+              except Exception as e:
+                  report['restrictions'][name] = {'erreur': repr(e)}
+
+          json.dump(report, open(OUT + '/rapport.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=1, default=str)
+          print(json.dumps(report, ensure_ascii=False, indent=1, default=str)[:8000])
 
           PYEOF
           python3 sources.py
