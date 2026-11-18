@@ -1,0 +1,711 @@
+{
+ "panneaux_DSR": {
+  "fichier": "signalisation-vma-112025.zip",
+  "date": "2026-03-11T16:23:59.179000+00:00",
+  "csv": [
+   [
+    "sign_extract_ARA_2025-11.csv",
+    "code,coords"
+   ],
+   [
+    "sign_extract_BFC_2025-11.csv",
+    "code,coords"
+   ],
+   [
+    "sign_extract_BZH_2025-11.csv",
+    "code,coords"
+   ],
+   [
+    "sign_extract_CVL_2025-11.csv",
+    "code,coords"
+   ],
+   [
+    "sign_extract_GE_2025-11.csv",
+    "code,coords"
+   ],
+   [
+    "sign_extract_HDF_2025-11.csv",
+    "code,coords"
+   ],
+   [
+    "sign_extract_NAQ_2025-11.csv",
+    "code,coords"
+   ],
+   [
+    "sign_extract_NMD_2025-11.csv",
+    "code,coords"
+   ],
+   [
+    "sign_extract_OCC_2025-11.csv",
+    "code,coords"
+   ],
+   [
+    "sign_extract_PAC_2025-11.csv",
+    "code,coords"
+   ],
+   [
+    "sign_extract_PDL_2025-11.csv",
+    "code,coords"
+   ]
+  ],
+  "panneaux": 482627,
+  "tuiles": 1095,
+  "dans_zone_ouest": 130619,
+  "codes": [
+   [
+    "B14",
+    265967
+   ],
+   [
+    "EB10",
+    88571
+   ],
+   [
+    "EB20",
+    73133
+   ],
+   [
+    "M9z",
+    55899
+   ],
+   [
+    "B33",
+    38507
+   ],
+   [
+    "M3a",
+    9268
+   ],
+   [
+    "M1",
+    7748
+   ],
+   [
+    "C107",
+    4429
+   ],
+   [
+    "B31",
+    3945
+   ],
+   [
+    "C108",
+    3481
+   ],
+   [
+    "M2",
+    3410
+   ],
+   [
+    "M4f",
+    2861
+   ],
+   [
+    "C207",
+    2828
+   ],
+   [
+    "C208",
+    1766
+   ],
+   [
+    "M4g",
+    1257
+   ],
+   [
+    "M4x",
+    618
+   ],
+   [
+    "M9Z",
+    400
+   ],
+   [
+    "M4a",
+    309
+   ],
+   [
+    "M4l",
+    159
+   ],
+   [
+    "M4F",
+    119
+   ],
+   [
+    "M4m",
+    71
+   ],
+   [
+    "M4b",
+    71
+   ],
+   [
+    "M4X",
+    28
+   ],
+   [
+    "M4c",
+    24
+   ],
+   [
+    "M4G",
+    21
+   ],
+   [
+    "M4A",
+    10
+   ],
+   [
+    "M3A",
+    9
+   ],
+   [
+    "M4L",
+    8
+   ],
+   [
+    "M4k",
+    7
+   ],
+   [
+    "M4B",
+    6
+   ],
+   [
+    "M4w",
+    6
+   ],
+   [
+    "M3d",
+    4
+   ],
+   [
+    "XM3D",
+    2
+   ]
+  ],
+  "exemples": [
+   [
+    45.492,
+    4.5193,
+    110,
+    0
+   ],
+   [
+    46.3876,
+    2.6956,
+    0,
+    32
+   ],
+   [
+    46.499,
+    3.0178,
+    70,
+    0
+   ],
+   [
+    46.1453,
+    3.0285,
+    70,
+    0
+   ],
+   [
+    45.1542,
+    5.7443,
+    70,
+    0
+   ],
+   [
+    46.1842,
+    2.9413,
+    70,
+    0
+   ],
+   [
+    45.5054,
+    4.2623,
+    30,
+    0
+   ],
+   [
+    45.3044,
+    2.6061,
+    70,
+    0
+   ]
+  ]
+ },
+ "voitures_radars": {
+  "fichier": "opendata-vitesses-pratiquees-voitures-radars-2024-01-01-2024-12-31.csv",
+  "date": "2026-01-13T14:45:52.615000+00:00",
+  "colonnes": [
+   "date",
+   "position",
+   "mesure",
+   "limite"
+  ],
+  "colonnes_utilisees": [
+   null,
+   null,
+   "position",
+   "limite"
+  ],
+  "lignes": 9636039,
+  "releves_zone_ouest": 2455828,
+  "points": 1540895,
+  "tuiles_rv": 254,
+  "exemples": [
+   "2024-01-01 00:58,48.474821666666664 -0.116385,63,90",
+   "2024-01-01 00:59,48.469636666666666 -0.11218,90,90",
+   "2024-01-01 01:07,48.45289666666667 -0.010750000000000001,82,80",
+   "2024-01-01 01:08,48.44391 0.013496666666666665,82,80",
+   "2024-01-01 01:42,48.550475 0.5839983333333334,96,80"
+  ],
+  "vma": [
+   [
+    80,
+    873246
+   ],
+   [
+    90,
+    524720
+   ],
+   [
+    70,
+    111131
+   ],
+   [
+    50,
+    22740
+   ],
+   [
+    110,
+    6030
+   ],
+   [
+    130,
+    3028
+   ]
+  ]
+ },
+ "dialog": {
+  "taille_Mo": 82.5,
+  "balises_vitesse": [],
+  "balises": [
+   [
+    "conditions",
+    53946
+   ],
+   [
+    "operator",
+    33966
+   ],
+   [
+    "values",
+    24866
+   ],
+   [
+    "value",
+    24866
+   ],
+   [
+    "validityByOrder",
+    16390
+   ],
+   [
+    "validityStatus",
+    16390
+   ],
+   [
+    "validityTimeSpecification",
+    16390
+   ],
+   [
+    "overallStartTime",
+    16390
+   ],
+   [
+    "status",
+    16284
+   ],
+   [
+    "locationByOrder",
+    13227
+   ],
+   [
+    "supplementaryPositionalDescription",
+    13227
+   ],
+   [
+    "_linearLocationExtension",
+    13227
+   ],
+   [
+    "linearLocationExtended",
+    13227
+   ],
+   [
+    "geoJsonGeometry",
+    13227
+   ],
+   [
+    "locationDescription",
+    11042
+   ],
+   [
+    "trafficRegulation",
+    9372
+   ],
+   [
+    "typeOfRegulation",
+    9372
+   ],
+   [
+    "condition",
+    9372
+   ],
+   [
+    "trafficRegulationOrder",
+    6912
+   ],
+   [
+    "description",
+    6912
+   ],
+   [
+    "issuingAuthority",
+    6912
+   ],
+   [
+    "regulationId",
+    6912
+   ],
+   [
+    "_trafficRegulationOrderExtension",
+    6912
+   ],
+   [
+    "trafficRegulationOrderExtended",
+    6912
+   ],
+   [
+    "source",
+    6912
+   ],
+   [
+    "publicUrl",
+    6912
+   ],
+   [
+    "negate",
+    6647
+   ],
+   [
+    "vehicleCharacteristics",
+    6391
+   ],
+   [
+    "roadInformation",
+    5033
+   ],
+   [
+    "directionRelativeOnLinearSection",
+    5033
+   ],
+   [
+    "accessRestrictionType",
+    3911
+   ],
+   [
+    "comparisonOperator",
+    3468
+   ],
+   [
+    "vehicleType",
+    3109
+   ],
+   [
+    "grossWeightCharacteristic",
+    2898
+   ],
+   [
+    "grossVehicleWeight",
+    2898
+   ],
+   [
+    "typeOfWeight",
+    2898
+   ],
+   [
+    "roadNumber",
+    2848
+   ],
+   [
+    "maxValue",
+    2741
+   ],
+   [
+    "numericValue",
+    2741
+   ],
+   [
+    "unitOfMeasure",
+    2741
+   ]
+  ]
+ },
+ "restrictions": {
+  "sncf_passages_niveau": {
+   "objets": 16878,
+   "champs": [
+    "id_if",
+    "libelle",
+    "mnemo",
+    "obstacle",
+    "code_ligne",
+    "rg_troncon",
+    "pk",
+    "x_l93",
+    "y_l93",
+    "x_wgs84",
+    "y_wgs84",
+    "diffr",
+    "c_geo",
+    "geo_point_2d",
+    "cle_pn_od",
+    "saco_code_commune",
+    "saco_libelle_commune"
+   ],
+   "exemples": [
+    {
+     "id_if": "30000012334",
+     "libelle": "PN 35",
+     "mnemo": "CLASSE 17",
+     "obstacle": "VC",
+     "code_ligne": "130000",
+     "rg_troncon": 1,
+     "pk": "019+663",
+     "x_l93": 1004181.322800003,
+     "y_l93": 6757070.425700001,
+     "x_wgs84": 7.068403964258318,
+     "y_wgs84": 47.843487148602506,
+     "diffr": null,
+     "c_geo": {
+      "lon": 7.068403964258318,
+      "lat": 47.843487148602506
+     },
+     "geo_point_2d": {
+      "lon": 7.068403964258321,
+      "lat": 47.843487148591166
+     },
+     "cle_pn_od": "12334",
+     "saco_code_commune": "68372",
+     "saco_libelle_commune": "Willer-sur-Thur (68372)"
+    },
+    {
+     "id_if": "30000021219",
+     "libelle": "PN 240",
+     "mnemo": "CLASSE 17",
+     "obstacle": "CD 40-0",
+     "code_ligne": "702000",
+     "rg_troncon": 1,
+     "pk": "368+490",
+     "x_l93": 637258.5141000003,
+     "y_l93": 6570108.096099999,
+     "x_wgs84": 2.185926580985545,
+     "y_wgs84": 46.227920863363295,
+     "diffr": null,
+     "c_geo": {
+      "lon": 2.185926580985545,
+      "lat": 46.227920863363295
+     },
+     "geo_point_2d": {
+      "lon": 2.1859265809855444,
+      "lat": 46.2279208633472
+     },
+     "cle_pn_od": "21219",
+     "saco_code_commune": "23040",
+     "saco_libelle_commune": "La Celle-sous-Gouzon (23040)"
+    },
+    {
+     "id_if": "30000024386",
+     "libelle": "PN 8",
+     "mnemo": "CLASSE 17",
+     "obstacle": "VC",
+     "code_ligne": "761000",
+     "rg_troncon": 1,
+     "pk": "007+531",
+     "x_l93": 792227.9886000007,
+     "y_l93": 6648040.9923,
+     "x_wgs84": 4.212133395220536,
+     "y_wgs84": 46.926191437748564,
+     "diffr": null,
+     "c_geo": {
+      "lon": 4.212133395220536,
+      "lat": 46.926191437748564
+     },
+     "geo_point_2d": {
+      "lon": 4.212133395220537,
+      "lat": 46.92619143773452
+     },
+     "cle_pn_od": "24386",
+     "saco_code_commune": "71251",
+     "saco_libelle_commune": "Laizy (71251)"
+    }
+   ]
+  },
+  "cd49_gabarit": {
+   "objets": 31,
+   "champs": [
+    "geo_point_2d",
+    "valeur_limitation",
+    "numero_arrete",
+    "date_arrete",
+    "nature_contrainte",
+    "axe",
+    "plod",
+    "absd",
+    "cumuld",
+    "plof",
+    "absf",
+    "cumulf"
+   ],
+   "exemples": [
+    {
+     "geo_point_2d": {
+      "lon": -0.5577862057347853,
+      "lat": 47.472730720628135
+     },
+     "valeur_limitation": 4.2,
+     "numero_arrete": null,
+     "date_arrete": null,
+     "nature_contrainte": "Hauteur",
+     "axe": "49 D0323",
+     "plod": "PR 35",
+     "absd": "804",
+     "cumuld": "32983",
+     "plof": "PR 35",
+     "absf": "882",
+     "cumulf": "33061"
+    },
+    {
+     "geo_point_2d": {
+      "lon": -0.5577029749972826,
+      "lat": 47.472670152164866
+     },
+     "valeur_limitation": 4.2,
+     "numero_arrete": null,
+     "date_arrete": null,
+     "nature_contrainte": "Hauteur",
+     "axe": "49 D0323  G",
+     "plod": "PR 35",
+     "absd": "807",
+     "cumuld": "1803",
+     "plof": "PR 35",
+     "absf": "883",
+     "cumulf": "1879"
+    },
+    {
+     "geo_point_2d": {
+      "lon": -0.9241401544386003,
+      "lat": 47.05977615023744
+     },
+     "valeur_limitation": 4.3,
+     "numero_arrete": null,
+     "date_arrete": null,
+     "nature_contrainte": "Hauteur",
+     "axe": "49 D0753",
+     "plod": "PR 2",
+     "absd": "551",
+     "cumuld": "1505",
+     "plof": "PR 2",
+     "absf": "587",
+     "cumulf": "1541"
+    }
+   ]
+  },
+  "cd49_tonnage": {
+   "objets": 104,
+   "champs": [
+    "geo_point_2d",
+    "limitation",
+    "numero_arrete",
+    "date_arrete",
+    "axe",
+    "plod",
+    "absd",
+    "cumuld",
+    "plof",
+    "absf",
+    "cumulf",
+    "cote"
+   ],
+   "exemples": [
+    {
+     "geo_point_2d": {
+      "lon": -0.05187654123618757,
+      "lat": 47.14372664677477
+     },
+     "limitation": 16.0,
+     "numero_arrete": "2022-ACP-0026",
+     "date_arrete": "2022-09-30",
+     "axe": "49 D0266",
+     "plod": "PR 2",
+     "absd": "531",
+     "cumuld": "2536",
+     "plof": "PR 3",
+     "absf": "57",
+     "cumulf": "3067",
+     "cote": "0"
+    },
+    {
+     "geo_point_2d": {
+      "lon": -0.07322549723262971,
+      "lat": 47.62530911946432
+     },
+     "limitation": 3.5,
+     "numero_arrete": "2015-AC-0099",
+     "date_arrete": "2015-03-26",
+     "axe": "49 D0138",
+     "plod": "PR 13",
+     "absd": "546",
+     "cumuld": "13531",
+     "plof": "PR 14",
+     "absf": "0",
+     "cumulf": "13937",
+     "cote": "0"
+    },
+    {
+     "geo_point_2d": {
+      "lon": -0.4456618800284217,
+      "lat": 47.66665288301107
+     },
+     "limitation": 3.5,
+     "numero_arrete": "2009.R-0688",
+     "date_arrete": "2009-07-19",
+     "axe": "49 D0052",
+     "plod": "PR 23",
+     "absd": "177",
+     "cumuld": "18718",
+     "plof": "PR 27",
+     "absf": "167",
+     "cumulf": "22707",
+     "cote": "0"
+    }
+   ]
+  }
+ },
+ "vendee_ponts": {
+  "fichier": "https://www.vendee.fr/fileadmin/user_upload/Amenager_et_preserver_le_cadre_de_vie/1_Documents/Extraction_Ht_OA_juin_2026.xls",
+  "onglet": "Juin 2026",
+  "restrictions": 537,
+  "sans_coordonnees": 44,
+  "hauteurs": 494,
+  "tonnages": 43
+ },
+ "carte_tracktour": {
+  "restrictions_officielles": 677,
+  "pn_surbaisses": 1760
+ }
+}
