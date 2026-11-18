@@ -87,15 +87,23 @@ jobs:
                   cols = [c.strip().strip('"') for c in head.strip().split(d)]; low = [c.lower() for c in cols]
                   ila = next((i for i, c in enumerate(low) if 'lat' in c), None)
                   ilo = next((i for i, c in enumerate(low) if 'lon' in c or 'lng' in c), None)
+                  ipo = next((i for i, c in enumerate(low) if 'position' in c or 'coord' in c), None)
                   ivm = next((i for i, c in enumerate(low) if 'vma' in c or 'limit' in c or 'autoris' in c or ('max' in c and 'vit' in c)), None)
                   agg, first, n, kept = defaultdict(Counter), [], 0, 0
                   for line in f:
                       n += 1
                       if len(first) < 5: first.append(line.strip())
-                      if ila is None or ilo is None or ivm is None: continue
+                      if ivm is None or ((ila is None or ilo is None) and ipo is None): continue
                       p = line.rstrip('\n').split(d)
-                      if len(p) <= max(ila, ilo, ivm): continue
-                      la, lo, v = num(p[ila]), num(p[ilo]), num(p[ivm])
+                      if ila is not None and ilo is not None:
+                          if len(p) <= max(ila, ilo, ivm): continue
+                          la, lo = num(p[ila]), num(p[ilo])
+                      else:
+                          if len(p) <= max(ipo, ivm): continue
+                          xy = p[ipo].strip().strip('"').split()
+                          if len(xy) < 2: continue
+                          la, lo = num(xy[0]), num(xy[1])
+                      v = num(p[ivm])
                       if la is None or lo is None or not v or not inbb(la, lo): continue
                       agg[(round(la, 4), round(lo, 4))][int(v)] += 1; kept += 1
               os.remove('radar.csv')
@@ -105,7 +113,7 @@ jobs:
               with gzip.open(OUT + '/radars_vma_ouest.json.gz', 'wt', encoding='utf-8') as f:
                   json.dump(pts, f, separators=(',', ':'))
               report['voitures_radars'] = {'fichier': r0.get('title'), 'date': r0.get('last_modified'), 'colonnes': cols,
-                  'colonnes_utilisees': [cols[i] if i is not None else None for i in (ila, ilo, ivm)],
+                  'colonnes_utilisees': [cols[i] if i is not None else None for i in (ila, ilo, ipo, ivm)],
                   'lignes': n, 'releves_zone_ouest': kept, 'points': len(pts), 'exemples': first,
                   'vma': Counter(p[2] for p in pts).most_common(15)}
           except Exception as e:
@@ -124,7 +132,6 @@ jobs:
 
           # 4) Restrictions officielles pour la carte TrackTour (ponts, gabarit, tonnage, passages à niveau)
           ODS = {
-              'sncf_ponts_rail': 'https://ressources.data.sncf.com/api/explore/v2.1/catalog/datasets/liste-des-ponts-rail/exports/geojson',
               'sncf_passages_niveau': 'https://ressources.data.sncf.com/api/explore/v2.1/catalog/datasets/liste-des-passages-a-niveau/exports/geojson',
               'cd49_gabarit': 'https://data.maine-et-loire.fr/api/explore/v2.1/catalog/datasets/224900019_limitation-de-gabarit-en-maine-et-loire/exports/geojson',
               'cd49_tonnage': 'https://data.maine-et-loire.fr/api/explore/v2.1/catalog/datasets/224900019_limitation-de-tonnage-en-maine-et-loire/exports/geojson',
@@ -141,6 +148,35 @@ jobs:
                       'exemples': [ft.get('properties') for ft in feats[:3]]}
               except Exception as e:
                   report['restrictions'][name] = {'erreur': repr(e)}
+
+          # 5) Fichiers légers pour la carte TrackTour
+          try:
+              off = []
+              for name, lab in (('cd49_gabarit', 'Département de Maine-et-Loire'), ('cd49_tonnage', 'Département de Maine-et-Loire')):
+                  pth = f'{OUT}/restrictions/{name}.geojson'
+                  if not os.path.exists(pth): continue
+                  for ft in json.load(open(pth, encoding='utf-8')).get('features', []):
+                      pr, g = ft.get('properties') or {}, ft.get('geometry') or {}
+                      if name == 'cd49_gabarit': t, v = {'Hauteur': 'h', 'Largeur': 'w', 'Longueur': 'l'}.get(pr.get('nature_contrainte')), pr.get('valeur_limitation')
+                      else: t, v = 'wt', pr.get('limitation')
+                      if not t or v is None: continue
+                      gt, gc = g.get('type'), g.get('coordinates') or []
+                      parts = [gc] if gt == 'LineString' else gc if gt == 'MultiLineString' else [[gc]] if gt == 'Point' else []
+                      for co in parts:
+                          off.append({'t': t, 'v': v, 'ax': (pr.get('axe') or '').strip(), 'ar': pr.get('numero_arrete') or '', 'dt': pr.get('date_arrete') or '', 'src': lab,
+                                      'co': [[round(c[0], 5), round(c[1], 5)] for c in co]})
+              with open(OUT + '/restrictions/officiel.json', 'w', encoding='utf-8') as f: json.dump(off, f, ensure_ascii=False, separators=(',', ':'))
+              pn = []
+              pth = OUT + '/restrictions/sncf_passages_niveau.geojson'
+              if os.path.exists(pth):
+                  for ft in json.load(open(pth, encoding='utf-8')).get('features', []):
+                      p = ft.get('properties') or {}
+                      if str(p.get('diffr') or '').upper() == 'OUI' and p.get('y_wgs84'):
+                          pn.append([round(p['y_wgs84'], 5), round(p['x_wgs84'], 5), p.get('libelle') or '', p.get('saco_libelle_commune') or '', p.get('obstacle') or '', p.get('code_ligne') or ''])
+              with open(OUT + '/restrictions/pn_surbaisses.json', 'w', encoding='utf-8') as f: json.dump(pn, f, ensure_ascii=False, separators=(',', ':'))
+              report['carte_tracktour'] = {'restrictions_officielles': len(off), 'pn_surbaisses': len(pn)}
+          except Exception as e:
+              report['carte_tracktour'] = {'erreur': repr(e)}
 
           json.dump(report, open(OUT + '/rapport.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=1, default=str)
           print(json.dumps(report, ensure_ascii=False, indent=1, default=str)[:8000])
