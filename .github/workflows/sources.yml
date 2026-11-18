@@ -84,3 +84,150 @@ jobs:
                       print('radars : coupure', essai + 1, repr(e)); time.sleep(20)
               else:
                   raise RuntimeError('téléchargement des radars impossible après 10 essais')
+              with open('radar.csv', encoding='utf-8-sig', errors='replace') as f:
+                  head = f.readline(); d = ';' if head.count(';') >= head.count(',') else ','
+                  cols = [c.strip().strip('"') for c in head.strip().split(d)]; low = [c.lower() for c in cols]
+                  ila = next((i for i, c in enumerate(low) if 'lat' in c), None)
+                  ilo = next((i for i, c in enumerate(low) if 'lon' in c or 'lng' in c), None)
+                  ipo = next((i for i, c in enumerate(low) if 'position' in c or 'coord' in c), None)
+                  ivm = next((i for i, c in enumerate(low) if 'vma' in c or 'limit' in c or 'autoris' in c or ('max' in c and 'vit' in c)), None)
+                  agg, first, n, kept = defaultdict(Counter), [], 0, 0
+                  for line in f:
+                      n += 1
+                      if len(first) < 5: first.append(line.strip())
+                      if ivm is None or ((ila is None or ilo is None) and ipo is None): continue
+                      p = line.rstrip('\n').split(d)
+                      if ila is not None and ilo is not None:
+                          if len(p) <= max(ila, ilo, ivm): continue
+                          la, lo = num(p[ila]), num(p[ilo])
+                      else:
+                          if len(p) <= max(ipo, ivm): continue
+                          xy = p[ipo].strip().strip('"').split()
+                          if len(xy) < 2: continue
+                          la, lo = num(xy[0]), num(xy[1])
+                      v = num(p[ivm])
+                      if la is None or lo is None or not v or not inbb(la, lo): continue
+                      agg[(round(la, 4), round(lo, 4))][int(v)] += 1; kept += 1
+              os.remove('radar.csv')
+              pts = []
+              for (la, lo), c in agg.items():
+                  v, k = c.most_common(1)[0]; t = sum(c.values()); pts.append([la, lo, v, t, round(k / t, 2)])
+              with gzip.open(OUT + '/radars_vma_ouest.json.gz', 'wt', encoding='utf-8') as f:
+                  json.dump(pts, f, separators=(',', ':'))
+              report['voitures_radars'] = {'fichier': r0.get('title'), 'date': r0.get('last_modified'), 'colonnes': cols,
+                  'colonnes_utilisees': [cols[i] if i is not None else None for i in (ila, ilo, ipo, ivm)],
+                  'lignes': n, 'releves_zone_ouest': kept, 'points': len(pts), 'exemples': first,
+                  'vma': Counter(p[2] for p in pts).most_common(15)}
+          except Exception as e:
+              report['voitures_radars'] = {'erreur': repr(e)}
+
+          # 3) DiaLog (arrêtés de circulation, format DATEX II)
+          try:
+              x = get('https://dialog.beta.gouv.fr/api/regulations.xml').read()
+              with gzip.open(OUT + '/dialog.xml.gz', 'wb') as f: f.write(x)
+              s = x.decode('utf-8', errors='replace')
+              report['dialog'] = {'taille_Mo': round(len(x) / 1e6, 1),
+                  'balises_vitesse': Counter(re.findall(r'<(\w+:)?(\w*[Ss]peed\w*)', s)).most_common(10),
+                  'balises': Counter(t for _, t in re.findall(r'<(\w+:)?(\w+)', s)).most_common(40)}
+          except Exception as e:
+              report['dialog'] = {'erreur': repr(e)}
+
+          # 4) Restrictions officielles pour la carte TrackTour (ponts, gabarit, tonnage, passages à niveau)
+          ODS = {
+              'sncf_passages_niveau': 'https://ressources.data.sncf.com/api/explore/v2.1/catalog/datasets/liste-des-passages-a-niveau/exports/geojson',
+              'cd49_gabarit': 'https://data.maine-et-loire.fr/api/explore/v2.1/catalog/datasets/224900019_limitation-de-gabarit-en-maine-et-loire/exports/geojson',
+              'cd49_tonnage': 'https://data.maine-et-loire.fr/api/explore/v2.1/catalog/datasets/224900019_limitation-de-tonnage-en-maine-et-loire/exports/geojson',
+          }
+          os.makedirs(OUT + '/restrictions', exist_ok=True); report['restrictions'] = {}
+          for name, url in ODS.items():
+              try:
+                  g = json.load(get(url)); feats = g.get('features', [])
+                  with open(f'{OUT}/restrictions/{name}.geojson', 'w', encoding='utf-8') as f:
+                      json.dump(g, f, ensure_ascii=False, separators=(',', ':'))
+                  champs = Counter()
+                  for ft in feats[:1000]: champs.update((ft.get('properties') or {}).keys())
+                  report['restrictions'][name] = {'objets': len(feats), 'champs': list(champs),
+                      'exemples': [ft.get('properties') for ft in feats[:3]]}
+              except Exception as e:
+                  report['restrictions'][name] = {'erreur': repr(e)}
+
+          # 4b) Vendée : hauteurs et tonnages sous les ponts (fichier Excel du Département, mis à jour plusieurs fois par an)
+          def l93(x, y):
+              # Lambert 93 -> WGS84 (formule IGN, précision < 1 m)
+              n=0.7256077650532670; C=11754255.426096; xs=700000; ys=12655612.049876; e=0.0818191910428158
+              R=math.hypot(x-xs, y-ys); g=math.atan((x-xs)/(ys-y)); lon=math.degrees(g/n)+3
+              L=-math.log(R/C)/n; p=2*math.atan(math.exp(L))-math.pi/2
+              for _ in range(12): p=2*math.atan(((1+e*math.sin(p))/(1-e*math.sin(p)))**(e/2)*math.exp(L))-math.pi/2
+              return math.degrees(p), lon
+          def vnum(s):
+              m=re.search(r'\d+(?:[.,]\d+)?', str(s)); return float(m.group().replace(',','.')) if m else None
+          def vendee_rows(rows):
+              out=[]; sans=0
+              for r in rows:
+                  r=list(r)+['']*10
+                  ag,voie,pr,X,Y,com,nom,h,t,obs=[('' if v is None or (isinstance(v,float) and math.isnan(v)) else v) for v in r[:10]]
+                  if not str(voie).strip() or str(voie).strip()=='VOIES': continue
+                  try: la,lo=l93(float(X),float(Y))
+                  except Exception: sans+=1; continue
+                  voie=re.sub(r'^RD 0*','D ',str(voie).strip()); nom=str(nom).replace('\n',' ').strip()
+                  ax=' · '.join(s for s in (voie, 'PR '+str(pr).replace(' ',''), nom, str(com).strip().title()) if s)
+                  for typ,val in (('h',vnum(h) if h!='' else None),('wt',vnum(t) if t!='' else None)):
+                      if val: out.append({'t':typ,'v':val,'ax':ax,'ar':'','dt':'','nt':str(obs).replace('\n',' ').strip(),'src':'Département de la Vendée','co':[[round(lo,5),round(la,5)]]})
+              return out, sans
+          vendee_off = []
+          try:
+              import xlrd
+              page = get('https://www.vendee.fr/amenager-et-preserver-leur-cadre-de-vie/organiser-les-mobilites/ameliorer-les-conditions-de-deplacement').read().decode('utf-8', 'replace')
+              liens = re.findall(r'[^"\'\s>]*Extraction_Ht_OA[^"\'\s<]*\.xlsx?', page)
+              url = liens[0] if liens else '/fileadmin/user_upload/Amenager_et_preserver_le_cadre_de_vie/1_Documents/Extraction_Ht_OA_juin_2026.xls'
+              if url.startswith('/'): url = 'https://www.vendee.fr' + url
+              sh = xlrd.open_workbook(file_contents=get(url).read()).sheet_by_index(0)
+              vendee_off, sans = vendee_rows([sh.row_values(i) for i in range(sh.nrows)])
+              report['vendee_ponts'] = {'fichier': url, 'onglet': sh.name, 'restrictions': len(vendee_off), 'sans_coordonnees': sans,
+                  'hauteurs': sum(1 for o in vendee_off if o['t'] == 'h'), 'tonnages': sum(1 for o in vendee_off if o['t'] == 'wt')}
+          except Exception as e:
+              report['vendee_ponts'] = {'erreur': repr(e)}
+
+          # 5) Fichiers légers pour la carte TrackTour
+          try:
+              off = []
+              for name, lab in (('cd49_gabarit', 'Département de Maine-et-Loire'), ('cd49_tonnage', 'Département de Maine-et-Loire')):
+                  pth = f'{OUT}/restrictions/{name}.geojson'
+                  if not os.path.exists(pth): continue
+                  for ft in json.load(open(pth, encoding='utf-8')).get('features', []):
+                      pr, g = ft.get('properties') or {}, ft.get('geometry') or {}
+                      if name == 'cd49_gabarit': t, v = {'Hauteur': 'h', 'Largeur': 'w', 'Longueur': 'l'}.get(pr.get('nature_contrainte')), pr.get('valeur_limitation')
+                      else: t, v = 'wt', pr.get('limitation')
+                      if not t or v is None: continue
+                      gt, gc = g.get('type'), g.get('coordinates') or []
+                      parts = [gc] if gt == 'LineString' else gc if gt == 'MultiLineString' else [[gc]] if gt == 'Point' else []
+                      for co in parts:
+                          off.append({'t': t, 'v': v, 'ax': (pr.get('axe') or '').strip(), 'ar': pr.get('numero_arrete') or '', 'dt': pr.get('date_arrete') or '', 'src': lab,
+                                      'co': [[round(c[0], 5), round(c[1], 5)] for c in co]})
+              off += vendee_off
+              with open(OUT + '/restrictions/officiel.json', 'w', encoding='utf-8') as f: json.dump(off, f, ensure_ascii=False, separators=(',', ':'))
+              pn = []
+              pth = OUT + '/restrictions/sncf_passages_niveau.geojson'
+              if os.path.exists(pth):
+                  for ft in json.load(open(pth, encoding='utf-8')).get('features', []):
+                      p = ft.get('properties') or {}
+                      if str(p.get('diffr') or '').upper() == 'OUI' and p.get('y_wgs84'):
+                          pn.append([round(p['y_wgs84'], 5), round(p['x_wgs84'], 5), p.get('libelle') or '', p.get('saco_libelle_commune') or '', p.get('obstacle') or '', p.get('code_ligne') or ''])
+              with open(OUT + '/restrictions/pn_surbaisses.json', 'w', encoding='utf-8') as f: json.dump(pn, f, ensure_ascii=False, separators=(',', ':'))
+              report['carte_tracktour'] = {'restrictions_officielles': len(off), 'pn_surbaisses': len(pn)}
+          except Exception as e:
+              report['carte_tracktour'] = {'erreur': repr(e)}
+
+          json.dump(report, open(OUT + '/rapport.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=1, default=str)
+          print(json.dumps(report, ensure_ascii=False, indent=1, default=str)[:8000])
+
+          PYEOF
+          python3 sources.py
+          du -sh out/*
+      - name: Publier (branche sources)
+        run: |
+          cd out
+          git init -q -b sources
+          git config user.name "robot-base-pl"; git config user.email "robot@users.noreply.github.com"
+          git add -A && git commit -q -m "Sources $(date +%F)"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" sources
