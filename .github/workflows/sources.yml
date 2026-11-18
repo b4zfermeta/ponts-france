@@ -114,9 +114,14 @@ jobs:
                   v, k = c.most_common(1)[0]; t = sum(c.values()); pts.append([la, lo, v, t, round(k / t, 2)])
               with gzip.open(OUT + '/radars_vma_ouest.json.gz', 'wt', encoding='utf-8') as f:
                   json.dump(pts, f, separators=(',', ':'))
+              # tuiles rv/ (0,25°) pour la carte des excès : [lat, lon, limite, relevés, % d'accord]
+              os.makedirs(OUT + '/rv', exist_ok=True); rvt = defaultdict(list)
+              for la, lo, v, t, sh in pts: rvt[f'{math.floor(la * 4) / 4:.2f}_{math.floor(lo * 4) / 4:.2f}'].append([la, lo, v, t, int(round(sh * 100))])
+              for k, rr in rvt.items():
+                  with open(f'{OUT}/rv/{k}.json', 'w') as f: json.dump(rr, f, separators=(',', ':'))
               report['voitures_radars'] = {'fichier': r0.get('title'), 'date': r0.get('last_modified'), 'colonnes': cols,
                   'colonnes_utilisees': [cols[i] if i is not None else None for i in (ila, ilo, ipo, ivm)],
-                  'lignes': n, 'releves_zone_ouest': kept, 'points': len(pts), 'exemples': first,
+                  'lignes': n, 'releves_zone_ouest': kept, 'points': len(pts), 'tuiles_rv': len(rvt), 'exemples': first,
                   'vma': Counter(p[2] for p in pts).most_common(15)}
           except Exception as e:
               report['voitures_radars'] = {'erreur': repr(e)}
